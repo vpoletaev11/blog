@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 
 	"github.com/jmoiron/sqlx"
@@ -35,26 +36,13 @@ func AddPostJSON(db *sqlx.DB) http.HandlerFunc {
 		post := Post{}
 		err := json.NewDecoder(r.Body).Decode(&post)
 		if err != nil {
-			w.WriteHeader(http.StatusBadRequest)
-			errStruct := Err{Msg: "incorrect request data"}
-			errMsg, err := json.Marshal(errStruct)
-			// TODO: return text error
-			if err != nil {
-				panic(err)
-			}
-			w.Write(errMsg)
+			handleError(w, err, http.StatusBadRequest)
 			return
 		}
 
 		err = addPost(db, post)
 		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			errStruct := Err{Msg: err.Error()}
-			errMsg, err := json.Marshal(errStruct)
-			if err != nil {
-				panic(err)
-			}
-			w.Write(errMsg)
+			handleError(w, err, http.StatusInternalServerError)
 		}
 	}
 }
@@ -76,25 +64,13 @@ func ListPostsJSON(db *sqlx.DB) http.HandlerFunc {
 
 		posts, err := listPosts(db, offset, limit)
 		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			errStruct := Err{Msg: err.Error()}
-			errMsg, err := json.Marshal(errStruct)
-			if err != nil {
-				panic(err)
-			}
-			w.Write(errMsg)
+			handleError(w, err, http.StatusInternalServerError)
 			return
 		}
 
 		postsJSON, err := json.Marshal(posts)
 		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			errStruct := Err{Msg: err.Error()}
-			errMsg, err := json.Marshal(errStruct)
-			if err != nil {
-				panic(err)
-			}
-			w.Write(errMsg)
+			handleError(w, err, http.StatusInternalServerError)
 			return
 		}
 		w.Write(postsJSON)
@@ -184,4 +160,15 @@ func listPosts(db *sqlx.DB, offset, limit int) ([]Post, error) {
 	}
 
 	return posts, nil
+}
+
+func handleError(w http.ResponseWriter, err error, status int) {
+	w.WriteHeader(status)
+	errStruct := Err{Msg: err.Error()}
+	errMsg, err := json.Marshal(errStruct)
+	if err != nil {
+		fmt.Fprintf(w, "error while marshal error: %s", err.Error())
+		return
+	}
+	w.Write(errMsg)
 }
