@@ -3,7 +3,7 @@ package main
 import (
 	"github.com/jmoiron/sqlx"
 
-	_ "github.com/lib/pq"
+	_ "github.com/jackc/pgx"
 )
 
 func main() {

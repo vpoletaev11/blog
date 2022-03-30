@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
+	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -46,7 +48,7 @@ func TestAddPostInsertPostDBError(t *testing.T) {
 
 	mock.ExpectBegin()
 	mock.ExpectExec("INSERT INTO post").WithArgs("title", "body").WillReturnError(fmt.Errorf("test db error"))
-	mock.ExpectCommit()
+	mock.ExpectRollback()
 
 	postJSON := `{
 		"title": "title",
@@ -59,7 +61,7 @@ func TestAddPostInsertPostDBError(t *testing.T) {
 	sut := handlers.AddPostJSON(db)
 	sut(w, r)
 
-	assert.Equal(t, 500, w.Code)
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
 	assertBodyEqual(t, `{"error":"test db error"}`, w.Body)
 }
 
@@ -84,7 +86,89 @@ func TestAddPostInsertTagsDBError(t *testing.T) {
 	sut := handlers.AddPostJSON(db)
 	sut(w, r)
 
-	assert.Equal(t, 500, w.Code)
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	assertBodyEqual(t, `{"error":"test db error"}`, w.Body)
+}
+
+func TestListPostsSuccess(t *testing.T) {
+	db, mock, err := sqlxmock.Newx()
+	require.NoError(t, err)
+	defer db.Close()
+
+	mock.ExpectQuery(
+		regexp.QuoteMeta("SELECT (id, title, body) FROM post")).WithArgs(0, 100).WillReturnRows(
+		sqlxmock.NewRows([]string{
+			"id", "title", "body",
+		}).AddRow(
+			1, "title", "body",
+		).AddRow(
+			2, "title", "body",
+		),
+	)
+	mock.ExpectQuery(
+		regexp.QuoteMeta("SELECT (name, post_id) FROM tag WHERE post_id IN")).WithArgs(1, 2).WillReturnRows(
+		sqlxmock.NewRows([]string{
+			"name", "post_id",
+		}).AddRow(
+			"tag1", 1,
+		).AddRow(
+			"tag2", 1,
+		).AddRow(
+			"tag3", 2,
+		),
+	)
+
+	r := httptest.NewRequest("GET", "/posts", nil)
+	w := httptest.NewRecorder()
+
+	sut := handlers.ListPostsJSON(db)
+	sut(w, r)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assertBodyEqual(t, `[{"ID":1,"title":"title","body":"body","tags":["tag1","tag2"]},{"ID":2,"title":"title","body":"body","tags":["tag3"]}]`, w.Body)
+}
+
+func TestListPostsSelectPostsDBError(t *testing.T) {
+	db, mock, err := sqlxmock.Newx()
+	require.NoError(t, err)
+	defer db.Close()
+
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT (id, title, body) FROM post")).WillReturnError(fmt.Errorf("test db error"))
+
+	r := httptest.NewRequest("GET", "/posts", nil)
+	w := httptest.NewRecorder()
+
+	sut := handlers.ListPostsJSON(db)
+	sut(w, r)
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	assertBodyEqual(t, `{"error":"test db error"}`, w.Body)
+}
+
+func TestListPostsSelectTagsError(t *testing.T) {
+	db, mock, err := sqlxmock.Newx()
+	require.NoError(t, err)
+	defer db.Close()
+
+	mock.ExpectQuery(
+		regexp.QuoteMeta("SELECT (id, title, body) FROM post")).WithArgs(0, 100).WillReturnRows(
+		sqlxmock.NewRows([]string{
+			"id", "title", "body",
+		}).AddRow(
+			1, "title", "body",
+		).AddRow(
+			2, "title", "body",
+		),
+	)
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT (name, post_id) FROM tag WHERE post_id IN")).WillReturnError(fmt.Errorf("test db error"))
+
+	r := httptest.NewRequest("GET", "/posts", nil)
+	w := httptest.NewRecorder()
+
+	sut := handlers.ListPostsJSON(db)
+	sut(w, r)
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
 	assertBodyEqual(t, `{"error":"test db error"}`, w.Body)
 }
 
