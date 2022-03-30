@@ -96,7 +96,7 @@ func TestListPostsSuccess(t *testing.T) {
 	defer db.Close()
 
 	mock.ExpectQuery(
-		regexp.QuoteMeta("SELECT (id, title, body) FROM post")).WithArgs(0, 100).WillReturnRows(
+		regexp.QuoteMeta("SELECT (id, title, body) FROM post")).WithArgs(0, handlers.MaxPostsLimit).WillReturnRows(
 		sqlxmock.NewRows([]string{
 			"id", "title", "body",
 		}).AddRow(
@@ -151,7 +151,7 @@ func TestListPostsSelectTagsError(t *testing.T) {
 	defer db.Close()
 
 	mock.ExpectQuery(
-		regexp.QuoteMeta("SELECT (id, title, body) FROM post")).WithArgs(0, 100).WillReturnRows(
+		regexp.QuoteMeta("SELECT (id, title, body) FROM post")).WithArgs(0, handlers.MaxPostsLimit).WillReturnRows(
 		sqlxmock.NewRows([]string{
 			"id", "title", "body",
 		}).AddRow(
@@ -170,6 +170,61 @@ func TestListPostsSelectTagsError(t *testing.T) {
 
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 	assertBodyEqual(t, `{"error":"test db error"}`, w.Body)
+}
+
+func TestListPostsIncorrectLimitParam(t *testing.T) {
+	r := httptest.NewRequest("GET", "/posts?offset=0&limit=wrong_value", nil)
+	w := httptest.NewRecorder()
+
+	sut := handlers.ListPostsJSON(nil)
+	sut(w, r)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assertBodyEqual(t, `{"error":"incorrect limit URL parameter, actual: wrong_value, expected: positive integer"}`, w.Body)
+}
+
+func TestListPostsNegativeLimitParam(t *testing.T) {
+	r := httptest.NewRequest("GET", "/posts?offset=0&limit=-20", nil)
+	w := httptest.NewRecorder()
+
+	sut := handlers.ListPostsJSON(nil)
+	sut(w, r)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assertBodyEqual(t, `{"error":"limit cannot be less than 0"}`, w.Body)
+}
+
+func TestListPostsOutOfBoundsLimitParam(t *testing.T) {
+	r := httptest.NewRequest("GET", "/posts?offset=0&limit=2000", nil)
+	w := httptest.NewRecorder()
+
+	sut := handlers.ListPostsJSON(nil)
+	sut(w, r)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assertBodyEqual(t, `{"error":"limit cannot be greater than 1000"}`, w.Body)
+}
+
+func TestListPostsIncorrectOffsetParam(t *testing.T) {
+	r := httptest.NewRequest("GET", "/posts?offset=wrong_value&limit=10", nil)
+	w := httptest.NewRecorder()
+
+	sut := handlers.ListPostsJSON(nil)
+	sut(w, r)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assertBodyEqual(t, `{"error":"incorrect offset URL parameter, actual: wrong_value, expected: positive integer"}`, w.Body)
+}
+
+func TestListPostsNegativeOffsetParam(t *testing.T) {
+	r := httptest.NewRequest("GET", "/posts?offset=-1&limit=100", nil)
+	w := httptest.NewRecorder()
+
+	sut := handlers.ListPostsJSON(nil)
+	sut(w, r)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assertBodyEqual(t, `{"error":"offset cannot be less than 0"}`, w.Body)
 }
 
 func assertBodyEqual(t *testing.T, expected string, actual *bytes.Buffer) {

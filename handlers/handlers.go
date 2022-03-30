@@ -4,8 +4,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 
 	"github.com/jmoiron/sqlx"
+)
+
+const (
+	MaxPostsLimit = 1000
 )
 
 const (
@@ -44,36 +49,6 @@ func AddPostJSON(db *sqlx.DB) http.HandlerFunc {
 		if err != nil {
 			handleError(w, err, http.StatusInternalServerError)
 		}
-	}
-}
-
-func ListPostsJSON(db *sqlx.DB) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		offsetStr := r.URL.Query().Get("offset")
-		limitStr := r.URL.Query().Get("limit")
-		offset := 0
-		limit := 0
-		if offsetStr == "" {
-			offset = 0
-		}
-		if limitStr == "" {
-			limit = 100
-		}
-
-		// TODO: add offset and limit URL parameters validation
-
-		posts, err := listPosts(db, offset, limit)
-		if err != nil {
-			handleError(w, err, http.StatusInternalServerError)
-			return
-		}
-
-		postsJSON, err := json.Marshal(posts)
-		if err != nil {
-			handleError(w, err, http.StatusInternalServerError)
-			return
-		}
-		w.Write(postsJSON)
 	}
 }
 
@@ -118,6 +93,29 @@ func addPost(db *sqlx.DB, post Post) error {
 	return nil
 }
 
+func ListPostsJSON(db *sqlx.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		offset, limit, err := getListPostsPaginationURLParams(r)
+		if err != nil {
+			handleError(w, err, http.StatusBadRequest)
+			return
+		}
+
+		posts, err := listPosts(db, offset, limit)
+		if err != nil {
+			handleError(w, err, http.StatusInternalServerError)
+			return
+		}
+
+		postsJSON, err := json.Marshal(posts)
+		if err != nil {
+			handleError(w, err, http.StatusInternalServerError)
+			return
+		}
+		w.Write(postsJSON)
+	}
+}
+
 func listPosts(db *sqlx.DB, offset, limit int) ([]Post, error) {
 	// Select posts with offset and limit.
 	posts := []Post{}
@@ -160,6 +158,39 @@ func listPosts(db *sqlx.DB, offset, limit int) ([]Post, error) {
 	}
 
 	return posts, nil
+}
+
+func getListPostsPaginationURLParams(r *http.Request) (offset, limit int, err error) {
+	offsetStr := r.URL.Query().Get("offset")
+	limitStr := r.URL.Query().Get("limit")
+	if offsetStr == "" {
+		offset = 0
+	} else {
+		offset, err = strconv.Atoi(offsetStr)
+		if err != nil {
+			return 0, 0, fmt.Errorf("incorrect offset URL parameter, actual: %s, expected: positive integer", offsetStr)
+		}
+	}
+	if limitStr == "" {
+		limit = MaxPostsLimit
+	} else {
+		limit, err = strconv.Atoi(limitStr)
+		if err != nil {
+			return 0, 0, fmt.Errorf("incorrect limit URL parameter, actual: %s, expected: positive integer", limitStr)
+		}
+	}
+
+	if offset < 0 {
+		return 0, 0, fmt.Errorf("offset cannot be less than 0")
+	}
+	if limit < 0 {
+		return 0, 0, fmt.Errorf("limit cannot be less than 0")
+	}
+	if limit > MaxPostsLimit {
+		return 0, 0, fmt.Errorf("limit cannot be greater than %d", MaxPostsLimit)
+	}
+
+	return
 }
 
 func handleError(w http.ResponseWriter, err error, status int) {
