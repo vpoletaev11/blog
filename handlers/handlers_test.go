@@ -3,6 +3,7 @@ package handlers_test
 import (
 	"blog/handlers"
 	"bytes"
+	"database/sql/driver"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -11,11 +12,23 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	sqlxmock "github.com/zhashkevych/go-sqlxmock"
 )
+
+type anyTime struct{}
+
+// ()Match() checks if input value is time
+func (a anyTime) Match(v driver.Value) bool {
+	_, ok := v.(time.Time)
+	if !ok {
+		return false
+	}
+	return ok
+}
 
 func TestAddPostSuccess(t *testing.T) {
 	db, mock, err := sqlxmock.Newx()
@@ -23,7 +36,7 @@ func TestAddPostSuccess(t *testing.T) {
 	defer db.Close()
 
 	mock.ExpectBegin()
-	mock.ExpectQuery("INSERT INTO post").WithArgs("title", "body").WillReturnRows(sqlxmock.NewRows([]string{"id"}).AddRow(1))
+	mock.ExpectQuery("INSERT INTO post").WithArgs("title", "body", anyTime{}).WillReturnRows(sqlxmock.NewRows([]string{"id"}).AddRow(1))
 	mock.ExpectExec("INSERT INTO tag").WithArgs("tag1", 1, "tag2", 1).WillReturnResult(sqlxmock.NewResult(2, 2))
 	mock.ExpectCommit()
 
@@ -47,8 +60,8 @@ func TestAddPostInsertPostDBError(t *testing.T) {
 	defer db.Close()
 
 	mock.ExpectBegin()
-	mock.ExpectQuery("INSERT INTO post").WithArgs("title", "body").WillReturnError(fmt.Errorf("test db error"))
-	mock.ExpectRollback()
+	mock.ExpectQuery("INSERT INTO post").WithArgs("title", "body", anyTime{}).WillReturnError(fmt.Errorf("test db error"))
+	mock.ExpectCommit()
 
 	postJSON := `{
 		"title": "title",
@@ -71,7 +84,7 @@ func TestAddPostInsertTagsDBError(t *testing.T) {
 	defer db.Close()
 
 	mock.ExpectBegin()
-	mock.ExpectQuery("INSERT INTO post").WithArgs("title", "body").WillReturnRows(sqlxmock.NewRows([]string{"id"}).AddRow(1))
+	mock.ExpectQuery("INSERT INTO post").WithArgs("title", "body", anyTime{}).WillReturnRows(sqlxmock.NewRows([]string{"id"}).AddRow(1))
 	mock.ExpectExec("INSERT INTO tag").WithArgs("tag1", 1, "tag2", 1).WillReturnError(fmt.Errorf("test db error"))
 	mock.ExpectRollback()
 
@@ -95,26 +108,31 @@ func TestListPostsSuccess(t *testing.T) {
 	require.NoError(t, err)
 	defer db.Close()
 
+	firstPostTimestamp, err := time.Parse("2006-01-02T15:04:05-00:00", "2022-03-10T12:43:12-00:00")
+	require.NoError(t, err)
+	secondPostTimestamp, err := time.Parse("2006-01-02T15:04:05-00:00", "2022-01-02T15:04:05-00:00")
+	require.NoError(t, err)
+
 	mock.ExpectQuery(
-		regexp.QuoteMeta("SELECT * FROM post")).WithArgs(0, handlers.MaxPostsLimit).WillReturnRows(
+		regexp.QuoteMeta("SELECT id, title, body, created_at FROM post ORDER BY created_at DESC")).WithArgs(0, handlers.MaxPostsLimit).WillReturnRows(
 		sqlxmock.NewRows([]string{
-			"id", "title", "body",
+			"id", "title", "body", "created_at",
 		}).AddRow(
-			1, "title", "body",
+			2, "title", "body", firstPostTimestamp,
 		).AddRow(
-			2, "title", "body",
+			1, "title", "body", secondPostTimestamp,
 		),
 	)
 	mock.ExpectQuery(
-		regexp.QuoteMeta("SELECT * FROM tag WHERE post_id IN")).WithArgs(1, 2).WillReturnRows(
+		regexp.QuoteMeta("SELECT id, name, post_id FROM tag WHERE post_id IN")).WithArgs(2, 1).WillReturnRows(
 		sqlxmock.NewRows([]string{
-			"name", "post_id",
+			"id", "name", "post_id",
 		}).AddRow(
-			"tag1", 1,
+			1, "tag1", 1,
 		).AddRow(
-			"tag2", 1,
+			2, "tag2", 1,
 		).AddRow(
-			"tag3", 2,
+			3, "tag3", 2,
 		),
 	)
 
@@ -125,7 +143,7 @@ func TestListPostsSuccess(t *testing.T) {
 	sut(w, r)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	assertBodyEqual(t, `[{"ID":1,"title":"title","body":"body","tags":["tag1","tag2"]},{"ID":2,"title":"title","body":"body","tags":["tag3"]}]`, w.Body)
+	assertBodyEqual(t, `[{"id":2,"title":"title","body":"body","created_at":"2022-03-10T12:43:12Z","tags":["tag3"]},{"id":1,"title":"title","body":"body","created_at":"2022-01-02T15:04:05Z","tags":["tag1","tag2"]}]`, w.Body)
 }
 
 func TestListPostsSelectPostsDBError(t *testing.T) {
@@ -133,7 +151,7 @@ func TestListPostsSelectPostsDBError(t *testing.T) {
 	require.NoError(t, err)
 	defer db.Close()
 
-	mock.ExpectQuery(regexp.QuoteMeta("SELECT * FROM post")).WillReturnError(fmt.Errorf("test db error"))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id, title, body, created_at FROM post ORDER BY created_at DESC")).WillReturnError(fmt.Errorf("test db error"))
 
 	r := httptest.NewRequest("GET", "/posts", nil)
 	w := httptest.NewRecorder()
@@ -151,7 +169,7 @@ func TestListPostsSelectTagsError(t *testing.T) {
 	defer db.Close()
 
 	mock.ExpectQuery(
-		regexp.QuoteMeta("SELECT * FROM post")).WithArgs(0, handlers.MaxPostsLimit).WillReturnRows(
+		regexp.QuoteMeta("SELECT id, title, body, created_at FROM post ORDER BY created_at DESC")).WithArgs(0, handlers.MaxPostsLimit).WillReturnRows(
 		sqlxmock.NewRows([]string{
 			"id", "title", "body",
 		}).AddRow(
@@ -160,7 +178,7 @@ func TestListPostsSelectTagsError(t *testing.T) {
 			2, "title", "body",
 		),
 	)
-	mock.ExpectQuery(regexp.QuoteMeta("SELECT * FROM tag WHERE post_id IN")).WillReturnError(fmt.Errorf("test db error"))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id, name, post_id FROM tag WHERE post_id IN")).WillReturnError(fmt.Errorf("test db error"))
 
 	r := httptest.NewRequest("GET", "/posts", nil)
 	w := httptest.NewRecorder()
