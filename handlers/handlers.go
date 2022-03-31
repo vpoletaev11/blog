@@ -14,10 +14,10 @@ const (
 )
 
 const (
-	insertPostQuery    = `INSERT INTO post (title, body) values (?, ?);`
+	insertPostQuery    = `INSERT INTO post (title, body) values ($1, $2) RETURNING id;`
 	insertTagsQuery    = `INSERT INTO tag (name, post_id) values (:name, :post_id);`
-	listPostsQuery     = `SELECT (id, title, body) FROM post OFFSET ? LIMIT ?;`
-	listPostsTagsQuery = `SELECT (name, post_id) FROM tag WHERE post_id IN (?);`
+	listPostsQuery     = `SELECT * FROM post OFFSET $1 LIMIT $2;`
+	listPostsTagsQuery = `SELECT * FROM tag WHERE post_id IN (?);`
 )
 
 type Post struct {
@@ -28,6 +28,7 @@ type Post struct {
 }
 
 type Tag struct {
+	ID     int    `db:"id"`
 	Name   string `db:"name"`
 	PostID int    `db:"post_id"`
 }
@@ -53,41 +54,36 @@ func AddPostJSON(db *sqlx.DB) http.HandlerFunc {
 }
 
 func addPost(db *sqlx.DB, post Post) error {
-	tx, err := db.Begin()
+	tx, err := db.Beginx()
 	if err != nil {
-		return err
+		return fmt.Errorf("error while begin transaction: %s", err.Error())
 	}
 
 	// Insert post.
-	res, err := tx.Exec(insertPostQuery, post.Title, post.Body)
+	postID := 0
+	err = tx.QueryRow(insertPostQuery, post.Title, post.Body).Scan(&postID)
 	if err != nil {
 		tx.Rollback()
-		return err
-	}
-
-	// Get id of inserted post.
-	postID, err := res.LastInsertId()
-	if err != nil {
-		return err
+		return fmt.Errorf("error while insert post into db: %s", err.Error())
 	}
 
 	// Build slice of tags structs for batch insert via NamedExec.
 	tags := make([]Tag, len(post.Tags))
 	for i := range tags {
 		tags[i].Name = post.Tags[i]
-		tags[i].PostID = int(postID)
+		tags[i].PostID = postID
 	}
 
 	// Insert tags associated with post.
-	_, err = db.NamedExec(insertTagsQuery, tags)
+	_, err = tx.NamedExec(insertTagsQuery, tags)
 	if err != nil {
 		tx.Rollback()
-		return err
+		return fmt.Errorf("error while insert post tags into db: %s", err.Error())
 	}
 
 	err = tx.Commit()
 	if err != nil {
-		return err
+		return fmt.Errorf("error while commit transaction: %s", err.Error())
 	}
 
 	return nil
@@ -109,7 +105,7 @@ func ListPostsJSON(db *sqlx.DB) http.HandlerFunc {
 
 		postsJSON, err := json.Marshal(posts)
 		if err != nil {
-			handleError(w, err, http.StatusInternalServerError)
+			handleError(w, fmt.Errorf("error while marshal list of posts: %s", err), http.StatusInternalServerError)
 			return
 		}
 		w.Write(postsJSON)
@@ -121,7 +117,7 @@ func listPosts(db *sqlx.DB, offset, limit int) ([]Post, error) {
 	posts := []Post{}
 	err := db.Select(&posts, listPostsQuery, offset, limit)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("error while fetch list of posts from db: %s", err.Error())
 	}
 
 	// Get list of posts IDs.
@@ -133,14 +129,14 @@ func listPosts(db *sqlx.DB, offset, limit int) ([]Post, error) {
 	// Select posts tags.
 	query, args, err := sqlx.In(listPostsTagsQuery, postsIDs)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("error while construct query fetch list of posts from db: %s", err.Error())
 	}
 	query = db.Rebind(query)
 
 	tags := []Tag{}
 	err = db.Select(&tags, query, args...)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("error while fetch list of posts tags from db: %s", err.Error())
 	}
 
 	// Create map of posts tags.

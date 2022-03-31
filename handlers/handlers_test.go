@@ -23,7 +23,7 @@ func TestAddPostSuccess(t *testing.T) {
 	defer db.Close()
 
 	mock.ExpectBegin()
-	mock.ExpectExec("INSERT INTO post").WithArgs("title", "body").WillReturnResult(sqlxmock.NewResult(1, 1))
+	mock.ExpectQuery("INSERT INTO post").WithArgs("title", "body").WillReturnRows(sqlxmock.NewRows([]string{"id"}).AddRow(1))
 	mock.ExpectExec("INSERT INTO tag").WithArgs("tag1", 1, "tag2", 1).WillReturnResult(sqlxmock.NewResult(2, 2))
 	mock.ExpectCommit()
 
@@ -47,7 +47,7 @@ func TestAddPostInsertPostDBError(t *testing.T) {
 	defer db.Close()
 
 	mock.ExpectBegin()
-	mock.ExpectExec("INSERT INTO post").WithArgs("title", "body").WillReturnError(fmt.Errorf("test db error"))
+	mock.ExpectQuery("INSERT INTO post").WithArgs("title", "body").WillReturnError(fmt.Errorf("test db error"))
 	mock.ExpectRollback()
 
 	postJSON := `{
@@ -62,7 +62,7 @@ func TestAddPostInsertPostDBError(t *testing.T) {
 	sut(w, r)
 
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
-	assertBodyEqual(t, `{"error":"test db error"}`, w.Body)
+	assertBodyEqual(t, `{"error":"error while insert post into db: test db error"}`, w.Body)
 }
 
 func TestAddPostInsertTagsDBError(t *testing.T) {
@@ -71,7 +71,7 @@ func TestAddPostInsertTagsDBError(t *testing.T) {
 	defer db.Close()
 
 	mock.ExpectBegin()
-	mock.ExpectExec("INSERT INTO post").WithArgs("title", "body").WillReturnResult(sqlxmock.NewResult(1, 1))
+	mock.ExpectQuery("INSERT INTO post").WithArgs("title", "body").WillReturnRows(sqlxmock.NewRows([]string{"id"}).AddRow(1))
 	mock.ExpectExec("INSERT INTO tag").WithArgs("tag1", 1, "tag2", 1).WillReturnError(fmt.Errorf("test db error"))
 	mock.ExpectRollback()
 
@@ -87,7 +87,7 @@ func TestAddPostInsertTagsDBError(t *testing.T) {
 	sut(w, r)
 
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
-	assertBodyEqual(t, `{"error":"test db error"}`, w.Body)
+	assertBodyEqual(t, `{"error":"error while insert post tags into db: test db error"}`, w.Body)
 }
 
 func TestListPostsSuccess(t *testing.T) {
@@ -96,7 +96,7 @@ func TestListPostsSuccess(t *testing.T) {
 	defer db.Close()
 
 	mock.ExpectQuery(
-		regexp.QuoteMeta("SELECT (id, title, body) FROM post")).WithArgs(0, handlers.MaxPostsLimit).WillReturnRows(
+		regexp.QuoteMeta("SELECT * FROM post")).WithArgs(0, handlers.MaxPostsLimit).WillReturnRows(
 		sqlxmock.NewRows([]string{
 			"id", "title", "body",
 		}).AddRow(
@@ -106,7 +106,7 @@ func TestListPostsSuccess(t *testing.T) {
 		),
 	)
 	mock.ExpectQuery(
-		regexp.QuoteMeta("SELECT (name, post_id) FROM tag WHERE post_id IN")).WithArgs(1, 2).WillReturnRows(
+		regexp.QuoteMeta("SELECT * FROM tag WHERE post_id IN")).WithArgs(1, 2).WillReturnRows(
 		sqlxmock.NewRows([]string{
 			"name", "post_id",
 		}).AddRow(
@@ -133,7 +133,7 @@ func TestListPostsSelectPostsDBError(t *testing.T) {
 	require.NoError(t, err)
 	defer db.Close()
 
-	mock.ExpectQuery(regexp.QuoteMeta("SELECT (id, title, body) FROM post")).WillReturnError(fmt.Errorf("test db error"))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT * FROM post")).WillReturnError(fmt.Errorf("test db error"))
 
 	r := httptest.NewRequest("GET", "/posts", nil)
 	w := httptest.NewRecorder()
@@ -142,7 +142,7 @@ func TestListPostsSelectPostsDBError(t *testing.T) {
 	sut(w, r)
 
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
-	assertBodyEqual(t, `{"error":"test db error"}`, w.Body)
+	assertBodyEqual(t, `{"error":"error while fetch list of posts from db: test db error"}`, w.Body)
 }
 
 func TestListPostsSelectTagsError(t *testing.T) {
@@ -151,7 +151,7 @@ func TestListPostsSelectTagsError(t *testing.T) {
 	defer db.Close()
 
 	mock.ExpectQuery(
-		regexp.QuoteMeta("SELECT (id, title, body) FROM post")).WithArgs(0, handlers.MaxPostsLimit).WillReturnRows(
+		regexp.QuoteMeta("SELECT * FROM post")).WithArgs(0, handlers.MaxPostsLimit).WillReturnRows(
 		sqlxmock.NewRows([]string{
 			"id", "title", "body",
 		}).AddRow(
@@ -160,7 +160,7 @@ func TestListPostsSelectTagsError(t *testing.T) {
 			2, "title", "body",
 		),
 	)
-	mock.ExpectQuery(regexp.QuoteMeta("SELECT (name, post_id) FROM tag WHERE post_id IN")).WillReturnError(fmt.Errorf("test db error"))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT * FROM tag WHERE post_id IN")).WillReturnError(fmt.Errorf("test db error"))
 
 	r := httptest.NewRequest("GET", "/posts", nil)
 	w := httptest.NewRecorder()
@@ -169,7 +169,7 @@ func TestListPostsSelectTagsError(t *testing.T) {
 	sut(w, r)
 
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
-	assertBodyEqual(t, `{"error":"test db error"}`, w.Body)
+	assertBodyEqual(t, `{"error":"error while fetch list of posts tags from db: test db error"}`, w.Body)
 }
 
 func TestListPostsIncorrectLimitParam(t *testing.T) {
