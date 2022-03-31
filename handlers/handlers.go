@@ -37,6 +37,16 @@ type Err struct {
 	Msg string `json:"error"`
 }
 
+// AddPostJSON inserts post entity (and it tags) into db.
+// Post should be represented in json format.
+//
+// Query example:
+// [POST] host/posts
+// {
+//     "title": "title",
+// 	   "body": "body",
+// 	   "tags": ["tag1", "tag2"]
+// }
 func AddPostJSON(db *sqlx.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		post := Post{}
@@ -53,17 +63,35 @@ func AddPostJSON(db *sqlx.DB) http.HandlerFunc {
 	}
 }
 
-func addPost(db *sqlx.DB, post Post) error {
+// addPost inserts post (and it tags) into db.
+func addPost(db *sqlx.DB, post Post) (err error) {
+	// Begin transaction
 	tx, err := db.Beginx()
 	if err != nil {
 		return fmt.Errorf("error while begin transaction: %s", err.Error())
 	}
 
+	// At the end of transaction:
+	// 1) Commit if success (no errors occured)
+	// 2) Rollback if error occured
+	defer func() {
+		switch err {
+		case nil:
+			txErr := tx.Commit()
+			if txErr != nil {
+				err = fmt.Errorf("error while commit transaction: %s", txErr.Error())
+			}
+		default:
+			// Even if rollback error occures transaction will be no-op
+			// (not as fast as if it success)
+			tx.Rollback()
+		}
+	}()
+
 	// Insert post.
 	postID := 0
 	err = tx.QueryRow(insertPostQuery, post.Title, post.Body).Scan(&postID)
 	if err != nil {
-		tx.Rollback()
 		return fmt.Errorf("error while insert post into db: %s", err.Error())
 	}
 
@@ -77,18 +105,29 @@ func addPost(db *sqlx.DB, post Post) error {
 	// Insert tags associated with post.
 	_, err = tx.NamedExec(insertTagsQuery, tags)
 	if err != nil {
-		tx.Rollback()
 		return fmt.Errorf("error while insert post tags into db: %s", err.Error())
-	}
-
-	err = tx.Commit()
-	if err != nil {
-		return fmt.Errorf("error while commit transaction: %s", err.Error())
 	}
 
 	return nil
 }
 
+// ListPostsJSON returns to a client the marshalled slice of posts.
+// Func returns result with offset and limit bounds.
+// Offset and limit - optional URL parameters, if not specified will be chosen defaults.
+//
+// Example query: [GET] host/posts
+// Example responce:
+// [
+//     {
+//         "ID": 1,
+//         "title": "title",
+//         "body": "body",
+//         "tags": [
+//             "tag1",
+//             "tag2"
+//         ]
+//     }
+// ]
 func ListPostsJSON(db *sqlx.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		offset, limit, err := getListPostsPaginationURLParams(r)
@@ -112,6 +151,7 @@ func ListPostsJSON(db *sqlx.DB) http.HandlerFunc {
 	}
 }
 
+// listPosts returns a slice of posts with offset and limit.
 func listPosts(db *sqlx.DB, offset, limit int) ([]Post, error) {
 	// Select posts with offset and limit.
 	posts := []Post{}
@@ -121,6 +161,7 @@ func listPosts(db *sqlx.DB, offset, limit int) ([]Post, error) {
 	}
 
 	// Get list of posts IDs.
+	// We need posts ids to select tags associated with them.
 	postsIDs := []int{}
 	for _, post := range posts {
 		postsIDs = append(postsIDs, post.ID)
@@ -149,6 +190,7 @@ func listPosts(db *sqlx.DB, offset, limit int) ([]Post, error) {
 	}
 
 	// Arrange tags to their posts.
+	// We don't use a join query to prevent posts info replication and to simplify query complexity.
 	for i, post := range posts {
 		posts[i].Tags = postsTags[post.ID]
 	}
@@ -156,6 +198,8 @@ func listPosts(db *sqlx.DB, offset, limit int) ([]Post, error) {
 	return posts, nil
 }
 
+// getListPostsPaginationURLParams gets offset and limit URL parameters.
+// Func also validates fetched parameters.
 func getListPostsPaginationURLParams(r *http.Request) (offset, limit int, err error) {
 	offsetStr := r.URL.Query().Get("offset")
 	limitStr := r.URL.Query().Get("limit")
@@ -189,6 +233,9 @@ func getListPostsPaginationURLParams(r *http.Request) (offset, limit int, err er
 	return
 }
 
+// handleError writes error response to a client which contains:
+// 1) Status code
+// 2) Marsahlled error
 func handleError(w http.ResponseWriter, err error, status int) {
 	w.WriteHeader(status)
 	errStruct := Err{Msg: err.Error()}
