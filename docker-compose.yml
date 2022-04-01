@@ -3,6 +3,7 @@ version: '3'
 services:
   db:
     image: postgres
+    container_name: blog_db
     restart: always
     ports:
       - 8081:5432
@@ -10,3 +11,10 @@ services:
       POSTGRES_PASSWORD: password
     volumes:
       - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+  app:
+    build: .
+    container_name: blog_app
+    ports:
+      - 8080:8080
+    links:
+      - db

@@ -4,6 +4,7 @@ import (
 	"blog/handlers"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/jmoiron/sqlx"
 
@@ -12,12 +13,13 @@ import (
 )
 
 func main() {
-	db, err := sqlx.Open("pgx", "postgres://postgres:password@localhost:8081/blog")
+	db, err := sqlx.Open("pgx", "postgres://postgres:password@172.17.0.1:8081/blog")
 	if err != nil {
 		panic(err)
 	}
 	defer db.Close()
 
+	time.Sleep(30 * time.Second)
 	err = db.Ping()
 	if err != nil {
 		panic(err)
