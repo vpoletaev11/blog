@@ -37,10 +37,8 @@ func main() {
 	router.HandleFunc("/posts", handlers.AddPostJSON(db)).Methods("POST")
 	router.HandleFunc("/posts", handlers.ListPostsJSON(db)).Methods("GET")
 
-	http.Handle("/", router)
-
 	fmt.Println("starting server on 8080 port")
-	err = http.ListenAndServe(":8080", nil)
+	err = http.ListenAndServe(":8080", router)
 	if err != nil {
 		panic(err)
 	}
